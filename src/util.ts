@@ -23,12 +23,10 @@ export function _createDbConnection(
   const request = indexedDB.open(dbName, version);
 
   request.onupgradeneeded = (e) => {
-    if (updateDbOnUpgrade) {
-      updateDbOnUpgrade(request.result, dbName, {
-        old: e.oldVersion,
-        new: e.newVersion ?? e.oldVersion,
-      });
-    }
+    updateDbOnUpgrade?.(request.result, dbName, {
+      old: e.oldVersion,
+      new: e.newVersion ?? e.oldVersion,
+    });
   };
 
   return promisify<IDBDatabase>(({ resolve, reject }) => {
