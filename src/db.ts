@@ -20,32 +20,24 @@ export async function openDbConnection(
   config: IndexedDBConfig
 ): Promise<DbConnectionResult> {
   const { databaseName, version, stores, forceStoreRefresh } = config;
-  let hasPerformStoreRefresh = false;
-  let failedWhilePerformingRefresh = false;
 
   const onUpgradeDb: UpdateDbOnUpgradeHandler = (db, _, retrievedVersion) => {
-    if (hasPerformStoreRefresh && !failedWhilePerformingRefresh) return;
-    let eligibleForRefresh = !hasPerformStoreRefresh && forceStoreRefresh;
     stores.forEach((storeConfig) => {
+      const { name: storeName, id: storeId } = storeConfig;
       if (
-        eligibleForRefresh &&
-        !(config.storeRefreshWhitelist ?? []).includes(storeConfig.name) &&
-        db.objectStoreNames.contains(storeConfig.name)
+        !(config.storeRefreshWhitelist ?? []).includes(storeName) &&
+        db.objectStoreNames.contains(storeName)
       ) {
         try {
-          db.deleteObjectStore(storeConfig.name);
-          hasPerformStoreRefresh = true;
-        } catch {
-          failedWhilePerformingRefresh = true;
-        }
+          db.deleteObjectStore(storeName);
+        } catch {}
       }
 
       if (
-        eligibleForRefresh ||
         retrievedVersion.old !== retrievedVersion.new ||
-        !validateStore(db, storeConfig.name)
+        !validateStore(db, storeName)
       ) {
-        const store = db.createObjectStore(storeConfig.name, storeConfig.id);
+        const store = db.createObjectStore(storeName, storeId);
         storeConfig.indices.forEach(({ name, keyPath, options }) => {
           store.createIndex(name, keyPath, options);
         });
@@ -53,13 +45,25 @@ export async function openDbConnection(
     });
   };
 
-  if (forceStoreRefresh) {
-    await _createDbConnection(
-      databaseName,
-      Math.trunc(version * Math.random() * 100),
-      onUpgradeDb
+  refreshDb: if (forceStoreRefresh) {
+    const retrievedDataInfo = (await indexedDB.databases()).find(
+      ({ name }) => name === databaseName
     );
+    if (!retrievedDataInfo || !retrievedDataInfo.name) break refreshDb;
+    const _dbName = retrievedDataInfo.name;
+
+    await new Promise((res, rej) => {
+      const result = indexedDB.deleteDatabase(_dbName);
+      result.onerror = (error) =>
+        rej(
+          new Error(`Failed to delete the database on forceRefresh Request`, {
+            cause: (error as any).error,
+          })
+        );
+      result.onsuccess = res;
+    });
   }
+
   const db = await _createDbConnection(databaseName, version, onUpgradeDb);
   return { db, storeConfig: getStoreNames(stores) };
 }
