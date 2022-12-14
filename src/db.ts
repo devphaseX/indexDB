@@ -19,11 +19,32 @@ import {
 export async function openDbConnection(
   config: IndexedDBConfig
 ): Promise<DbConnectionResult> {
-  const { databaseName, version, stores } = config;
+  const { databaseName, version, stores, forceStoreRefresh } = config;
+  let hasPerformStoreRefresh = false;
+  let failedWhilePerformingRefresh = false;
 
-  const onUpgradeDb: UpdateDbOnUpgradeHandler = (db) => {
+  const onUpgradeDb: UpdateDbOnUpgradeHandler = (db, _, retrievedVersion) => {
+    if (hasPerformStoreRefresh && !failedWhilePerformingRefresh) return;
+    let eligibleForRefresh = !hasPerformStoreRefresh && forceStoreRefresh;
     stores.forEach((storeConfig) => {
-      if (!validateStore(db, storeConfig.name)) {
+      if (
+        eligibleForRefresh &&
+        !(config.storeRefreshWhitelist ?? []).includes(storeConfig.name) &&
+        db.objectStoreNames.contains(storeConfig.name)
+      ) {
+        try {
+          db.deleteObjectStore(storeConfig.name);
+          hasPerformStoreRefresh = true;
+        } catch {
+          failedWhilePerformingRefresh = true;
+        }
+      }
+
+      if (
+        eligibleForRefresh ||
+        retrievedVersion.old !== retrievedVersion.new ||
+        !validateStore(db, storeConfig.name)
+      ) {
         const store = db.createObjectStore(storeConfig.name, storeConfig.id);
         storeConfig.indices.forEach(({ name, keyPath, options }) => {
           store.createIndex(name, keyPath, options);
@@ -31,6 +52,14 @@ export async function openDbConnection(
       }
     });
   };
+
+  if (forceStoreRefresh) {
+    await _createDbConnection(
+      databaseName,
+      Math.trunc(version * Math.random() * 100),
+      onUpgradeDb
+    );
+  }
   const db = await _createDbConnection(databaseName, version, onUpgradeDb);
   return { db, storeConfig: getStoreNames(stores) };
 }

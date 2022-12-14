@@ -13,6 +13,8 @@ export interface IndexedDBStore {
 export interface IndexedDBConfig {
   databaseName: string;
   version: number;
+  forceStoreRefresh?: boolean;
+  storeRefreshWhitelist?: Array<string>;
   stores: IndexedDBStore[];
 }
 
